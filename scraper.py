@@ -13,6 +13,7 @@ import json
 from datetime import datetime
 import requests
 from urllib.parse import urljoin
+import asyncio
 
 class CoomerScraper:
     def __init__(self):
@@ -26,6 +27,43 @@ class CoomerScraper:
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
+        # 初始化已爬取帖子的记录文件
+        self.history_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scraped_posts.json')
+        self.scraped_posts = self.load_scraped_posts()
+
+    def load_scraped_posts(self):
+        """加载已爬取的帖子记录"""
+        try:
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            print(f"加载历史记录时出错: {e}")
+            return {}
+
+    def save_scraped_posts(self):
+        """保存已爬取的帖子记录"""
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(self.scraped_posts, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"保存历史记录时出错: {e}")
+
+    def is_post_scraped(self, post_id, post_data):
+        """检查帖子是否已经爬取过"""
+        if post_id in self.scraped_posts:
+            # 检查是否所有视频都已下载
+            old_videos = set(v['filename'] for v in self.scraped_posts[post_id].get('videos', []))
+            new_videos = set(v['filename'] for v in post_data.get('videos', []))
+            if old_videos == new_videos:
+                return True
+        return False
+
+    def add_to_scraped_posts(self, post_id, post_data):
+        """添加帖子到已爬取记录"""
+        self.scraped_posts[post_id] = post_data
+        self.save_scraped_posts()
 
     def setup_driver(self):
         options = Options()
@@ -74,26 +112,83 @@ class CoomerScraper:
                 print(f"Unexpected error: {e}")
                 return None
 
-    def download_video(self, url, filename):
-        try:
-            print(f"Downloading video from {url}...")
+    async def run_async(self, url, callback=None):
+        """异步运行爬虫"""
+        print("开始爬取过程...")
+        html_content = self.get_page_content(url)
+        if html_content:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            posts = soup.find_all('article', class_=['post-card', 'post-card--preview'])
             
-            # 随机延迟
-            self.random_sleep()
+            if callback:
+                await callback.on_scraping_start(len(posts))
             
-            response = self.session.get(url, stream=True)
-            response.raise_for_status()
+            parsed_posts = []
+            skipped_posts = 0
             
-            file_path = os.path.join(self.download_dir, filename)
-            with open(file_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            print(f"Video saved to {file_path}")
-            return True
-        except Exception as e:
-            print(f"Error downloading video: {e}")
-            return False
+            for i, post in enumerate(posts, 1):
+                post_data = await self.process_post(post, i, len(posts), callback)
+                if post_data:
+                    parsed_posts.append(post_data)
+            
+            self.save_results(parsed_posts)
+            return parsed_posts
+        return []
+
+    async def process_post(self, post, current_num, total_posts, callback=None):
+        """处理单个帖子"""
+        print(f"\n处理帖子 {current_num}/{total_posts}")
+        post_data = {
+            'post_id': post.get('data-id'),
+            'service': post.get('data-service'),
+            'user_id': post.get('data-user'),
+            'url': post.find('a', class_='fancy-link')['href'] if post.find('a', class_='fancy-link') else None,
+            'timestamp': None,
+            'favorites': None,
+            'attachments': None,
+            'videos': []
+        }
+
+        # 检查是否已爬取过
+        if post_data['post_id'] and self.is_post_scraped(post_data['post_id'], post_data):
+            print(f"帖子 {post_data['post_id']} 已爬取过，跳过")
+            if callback:
+                await callback.on_post_processed(current_num, skipped=True)
+            return None
+
+        # 获取时间戳
+        timestamp_elem = post.find('time', class_='timestamp')
+        if timestamp_elem:
+            post_data['timestamp'] = timestamp_elem['datetime']
+
+        # 获取附件信息和收藏数
+        footer_div = post.find('footer').find('div').find('div')
+        if footer_div:
+            text = footer_div.get_text(separator='\n').strip()
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            
+            for line in lines:
+                if 'attachments' in line.lower():
+                    post_data['attachments'] = line.split(' ')[0]
+                elif 'favorites' in line.lower():
+                    post_data['favorites'] = line.split(' ')[0]
+
+        # 获取视频链接
+        if post_data['url']:
+            video_links = self.get_video_links(post_data['url'])
+            post_data['videos'] = video_links
+            
+            if callback and video_links:
+                await callback.on_video_found(len(video_links))
+
+        # 添加到已爬取记录
+        if post_data['post_id']:
+            self.add_to_scraped_posts(post_data['post_id'], post_data)
+
+        if callback:
+            await callback.on_post_processed(current_num)
+
+        return post_data
 
     def get_video_links(self, post_url):
         try:
@@ -121,57 +216,51 @@ class CoomerScraper:
             print(f"Error getting video links: {e}")
             return []
 
-    def parse_posts(self, html_content):
-        if not html_content:
-            return []
+    async def download_video(self, url, filename, callback=None, dropbox_sync=None):
+        """下载视频文件"""
+        try:
+            print(f"正在下载视频: {filename}")
+            
+            # 随机延迟
+            self.random_sleep()
+            
+            response = self.session.get(url, stream=True)
+            response.raise_for_status()
+            
+            file_path = os.path.join(self.download_dir, filename)
+            file_size = int(response.headers.get('content-length', 0))
+            
+            with open(file_path, 'wb') as f:
+                downloaded = 0
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        progress = (downloaded / file_size) * 100 if file_size > 0 else 0
+                        if callback:
+                            await callback.on_video_download_progress(filename, progress)
+            
+            print(f"视频已保存到 {file_path}")
+            
+            # 下载完成后通知回调
+            if callback:
+                await callback.on_video_downloaded(filename)
+            
+            # 如果提供了 dropbox_sync，自动上传并删除本地文件
+            if dropbox_sync and dropbox_sync.auto_sync:
+                print(f"正在同步到 Dropbox: {filename}")
+                success = await dropbox_sync.upload_file(file_path, callback)
+                if success:
+                    print(f"删除本地文件: {filename}")
+                    os.remove(file_path)
+            
+            return True
+        except Exception as e:
+            print(f"下载视频时出错: {e}")
+            return False
 
-        soup = BeautifulSoup(html_content, 'html.parser')
-        posts = soup.find_all('article', class_=['post-card', 'post-card--preview'])
-        
-        parsed_posts = []
-        for i, post in enumerate(posts, 1):
-            print(f"\nProcessing post {i}/{len(posts)}")
-            post_data = {
-                'post_id': post.get('data-id'),
-                'service': post.get('data-service'),
-                'user_id': post.get('data-user'),
-                'url': post.find('a', class_='fancy-link')['href'] if post.find('a', class_='fancy-link') else None,
-                'timestamp': None,
-                'favorites': None,
-                'attachments': None,
-                'videos': []
-            }
-
-            # 获取时间戳
-            timestamp_elem = post.find('time', class_='timestamp')
-            if timestamp_elem:
-                post_data['timestamp'] = timestamp_elem['datetime']
-
-            # 获取附件信息和收藏数
-            footer_div = post.find('footer').find('div').find('div')
-            if footer_div:
-                text = footer_div.get_text(separator='\n').strip()
-                lines = [line.strip() for line in text.split('\n') if line.strip()]
-                
-                for line in lines:
-                    if 'attachments' in line.lower():
-                        post_data['attachments'] = line.split(' ')[0]
-                    elif 'favorites' in line.lower():
-                        post_data['favorites'] = line.split(' ')[0]
-
-            # 获取视频链接
-            if post_data['url']:
-                video_links = self.get_video_links(post_data['url'])
-                post_data['videos'] = video_links
-
-            parsed_posts.append(post_data)
-            # 每处理完一个帖子后保存一次结果
-            self.save_results(parsed_posts)
-
-        return parsed_posts
-
-    def download_all_videos(self, posts):
-        """下载所有帖子中的视频"""
+    async def download_all_videos(self, posts, callback=None, dropbox_sync=None):
+        """下载所有视频"""
         total_videos = sum(len(post['videos']) for post in posts)
         if total_videos == 0:
             print("没有找到任何视频链接")
@@ -180,25 +269,15 @@ class CoomerScraper:
         print(f"\n找到 {total_videos} 个视频链接。")
         print("视频将被下载到:", self.download_dir)
         
-        # 显示所有视频信息
-        for i, post in enumerate(posts, 1):
-            if post['videos']:
-                print(f"\n帖子 {i}:")
-                for video in post['videos']:
-                    print(f"- {video['filename']}")
-
-        # 询问用户是否下载
-        response = input("\n是否下载这些视频？(y/n): ").lower().strip()
-        if response != 'y':
-            print("取消下载")
-            return
+        if callback:
+            await callback.on_video_found(total_videos)
 
         # 开始下载
         downloaded = 0
         for post in posts:
             for video in post['videos']:
                 print(f"\n[{downloaded + 1}/{total_videos}] 正在下载: {video['filename']}")
-                if self.download_video(video['url'], video['filename']):
+                if await self.download_video(video['url'], video['filename'], callback, dropbox_sync):
                     downloaded += 1
                 self.random_sleep(3, 7)  # 随机延迟，避免请求过快
 
@@ -209,16 +288,15 @@ class CoomerScraper:
             json.dump(posts, f, indent=2, ensure_ascii=False)
             print(f"Results saved to {filename}")
 
-    def run(self):
+    async def run(self):
         print("开始爬取过程...")
         html_content = self.get_page_content(self.popular_url)
         if html_content:
-            posts = self.parse_posts(html_content)
-            self.save_results(posts)
+            posts = await self.run_async(self.popular_url)
             print(f"\n找到 {len(posts)} 个帖子")
             
             # 询问用户是否下载视频
-            self.download_all_videos(posts)
+            await self.download_all_videos(posts)
             
             return posts
         return []
@@ -230,6 +308,6 @@ class CoomerScraper:
 if __name__ == "__main__":
     scraper = CoomerScraper()
     try:
-        results = scraper.run()
+        results = asyncio.run(scraper.run())
     finally:
         scraper.cleanup()
