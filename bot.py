@@ -172,14 +172,17 @@ class DiscordScraperCallback:
 async def on_ready():
     """Bot启动时的处理"""
     print(f'{bot.user} 已连接到Discord!')
-    global current_task
+    global current_task, scraping_task
     current_task = None  # 重置任务状态
+    
+    # 根据配置的间隔设置定时任务
+    scraping_task.change_interval(minutes=config.interval_minutes)
     if not scraping_task.is_running():
         scraping_task.start()
 
 @tasks.loop(minutes=1)
 async def scraping_task():
-    """定时爬取任务"""
+    """定时任务"""
     global current_task
     
     if not current_task or current_task.done():
@@ -187,14 +190,15 @@ async def scraping_task():
         if channel:
             message = await channel.send("准备开始新的爬取任务...")
             current_task = asyncio.create_task(run_scraper(message))
-    else:
-        print("上一个任务还在运行中...")
 
 async def run_scraper(message):
     """运行爬虫"""
     global scraper_instance, current_task, progress_message
     
     try:
+        # 暂停定时任务
+        scraping_task.cancel()
+        
         progress_message = await message.channel.send("🔄 初始化爬虫...")
         callback = DiscordScraperCallback(progress_message)
         
@@ -214,6 +218,9 @@ async def run_scraper(message):
             scraper_instance.cleanup()
     finally:
         current_task = None  # 任务完成后重置状态
+        # 重新启动定时任务
+        if not scraping_task.is_running():
+            scraping_task.start()
 
 async def sync_videos(directory):
     """同步视频到 Dropbox"""
