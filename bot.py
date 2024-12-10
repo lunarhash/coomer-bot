@@ -88,6 +88,8 @@ class DiscordScraperCallback:
         self.current_file = ""
         self.download_progress = 0
         self.sync_status = ""
+        self.last_update_time = datetime.now()  # 添加最后更新时间记录
+        self.update_interval = 8  # 设置更新间隔为8秒
 
     def format_time(self, seconds):
         if seconds < 60:
@@ -140,33 +142,61 @@ class DiscordScraperCallback:
         await update_progress(self.message, "\n".join(message_lines))
 
     async def on_scraping_start(self, total_posts):
+        """开始抓取时的回调"""
         self.total_posts = total_posts
-        await self.update_progress()
+        current_time = datetime.now()
+        if (current_time - self.last_update_time).total_seconds() >= self.update_interval:
+            await self.update_progress()
+            self.last_update_time = current_time
 
-    async def on_post_processed(self, post_num, skipped=False):
-        self.processed_posts = post_num
-        await self.update_progress()
+    async def on_post_processed(self, current_num, skipped=False):
+        """处理完一个帖子的回调"""
+        if not skipped:
+            self.processed_posts = current_num
+        current_time = datetime.now()
+        if (current_time - self.last_update_time).total_seconds() >= self.update_interval:
+            await self.update_progress()
+            self.last_update_time = current_time
 
     async def on_video_found(self, count):
+        """发现视频时的回调"""
         self.total_videos += count
-        await self.update_progress()
+        current_time = datetime.now()
+        if (current_time - self.last_update_time).total_seconds() >= self.update_interval:
+            await self.update_progress()
+            self.last_update_time = current_time
 
     async def on_video_download_progress(self, filename, progress):
+        """更新视频下载进度"""
         self.current_file = filename
         self.download_progress = progress
-        await self.update_progress()
+        
+        # 检查是否达到更新间隔
+        current_time = datetime.now()
+        if (current_time - self.last_update_time).total_seconds() >= self.update_interval:
+            await self.update_progress()
+            self.last_update_time = current_time
 
     async def on_video_downloaded(self, filename):
+        """视频下载完成的回调"""
         self.downloaded_videos += 1
         self.current_file = ""
         self.download_progress = 0
-        await self.update_progress()
+        current_time = datetime.now()
+        if (current_time - self.last_update_time).total_seconds() >= self.update_interval:
+            await self.update_progress()
+            self.last_update_time = current_time
 
     async def on_video_synced(self, filename, success, message):
+        """视频同步完成的回调"""
+        self.synced_videos += 1
         self.sync_status = f"{'✅' if success else '❌'} {message}"
         if success:
             self.synced_videos += 1
-        await self.update_progress()
+        current_time = datetime.now()
+        if (current_time - self.last_update_time).total_seconds() >= self.update_interval:
+            await self.update_progress()
+            self.last_update_time = current_time
 
 @bot.event
 async def on_ready():

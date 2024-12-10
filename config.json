@@ -2,5 +2,6 @@
   "interval_minutes": 60,
   "urls": {
     "popular": "https://coomer.su/posts/popular"
-  }
+  },
+  "auto_sync": false
 }
