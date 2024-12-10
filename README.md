@@ -422,3 +422,173 @@ python bot.py
 ## 许可证
 
 MIT License
+
+## 🤖 Coomer Bot
+
+一个功能强大的 Discord Bot，用于自动化内容抓取和管理。支持并发下载、Dropbox 同步和 Discord 实时状态更新。
+
+## ✨ 特性
+
+- 🚀 高性能并发下载
+- 📊 Discord 实时状态更新
+- ☁️ Dropbox 云端同步（可选）
+- 🎯 智能去重和历史记录
+- ⚡ 异步处理架构
+- 🛠️ 灵活的配置选项
+
+## 🔧 技术栈
+
+- Python 3.8+
+- Discord.py
+- Selenium
+- BeautifulSoup4
+- aiohttp
+- Dropbox SDK
+
+## 🚀 快速开始
+
+### Ubuntu 环境部署
+
+1. **系统准备**
+```bash
+# 更新系统
+sudo apt update && sudo apt upgrade -y
+
+# 安装必要的系统依赖
+sudo apt install -y python3 python3-pip python3-venv git chromium-browser chromium-chromedriver
+```
+
+2. **克隆项目**
+```bash
+# 克隆仓库
+git clone https://github.com/lunarhash/coomer-bot.git
+cd coomer-bot
+
+# 创建并激活虚拟环境
+python3 -m venv venv
+source venv/bin/activate
+```
+
+3. **安装依赖**
+```bash
+# 安装项目依赖
+pip install -r requirements.txt
+```
+
+4. **配置环境变量**
+```bash
+# 创建并编辑 .env 文件
+cp .env.example .env
+nano .env
+
+# 填入以下配置（替换为实际值）
+DISCORD_TOKEN=your_discord_token
+DISCORD_CHANNEL_ID=your_channel_id
+DROPBOX_TOKEN=your_dropbox_token
+DROPBOX_REFRESH_TOKEN=your_dropbox_refresh_token
+DROPBOX_APP_KEY=your_dropbox_app_key
+DROPBOX_APP_SECRET=your_dropbox_app_secret
+```
+
+5. **配置下载设置**
+```bash
+# 编辑 config.json（已包含默认配置）
+{
+  "interval_minutes": 60,
+  "urls": {
+    "popular": "https://coomer.su/posts/popular"
+  },
+  "auto_sync": false
+}
+```
+
+6. **运行 Bot**
+```bash
+# 前台运行（测试用）
+python bot.py
+
+# 后台运行（生产环境）
+nohup python bot.py > bot.log 2>&1 &
+```
+
+### 🔄 保持运行
+
+推荐使用 `systemd` 来管理服务：
+
+1. **创建服务文件**
+```bash
+sudo nano /etc/systemd/system/coomerbot.service
+```
+
+2. **添加以下内容**
+```ini
+[Unit]
+Description=Coomer Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+User=your_username
+WorkingDirectory=/path/to/coomer-bot
+Environment=PATH=/path/to/coomer-bot/venv/bin
+ExecStart=/path/to/coomer-bot/venv/bin/python bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+3. **启动服务**
+```bash
+sudo systemctl enable coomerbot
+sudo systemctl start coomerbot
+```
+
+4. **查看状态**
+```bash
+sudo systemctl status coomerbot
+```
+
+## 📝 Discord 命令
+
+- `!sync` - 手动同步视频到 Dropbox
+- `!autosync [true/false]` - 开启/关闭自动同步
+- `!storage` - 显示 Dropbox 存储使用情况
+- `!interval [minutes]` - 设置抓取间隔
+- `!add_url [name] [url]` - 添加新的抓取URL
+- `!remove_url [name]` - 移除抓取URL
+- `!list_urls` - 列出所有抓取URL
+- `!status` - 显示当前状态
+
+## ⚙️ 性能优化
+
+- 并发下载数：默认为3，可在 `scraper.py` 中的 `max_concurrent_downloads` 调整
+- Discord 状态更新：每8秒更新一次，可在 `bot.py` 中的 `update_interval` 调整
+- 下载缓冲区：使用32KB的chunk size，可在 `scraper.py` 中调整
+
+## 📁 项目结构
+
+```
+coomer-bot/
+├── bot.py           # Discord Bot 主程序
+├── scraper.py       # 内容抓取核心逻辑
+├── dropbox_sync.py  # Dropbox 同步功能
+├── config.json      # 配置文件
+├── requirements.txt # 项目依赖
+├── .env            # 环境变量
+└── downloads/      # 下载文件目录
+```
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📄 许可证
+
+MIT License
+
+## 🔗 相关链接
+
+- [Discord.py 文档](https://discordpy.readthedocs.io/)
+- [Dropbox API 文档](https://www.dropbox.com/developers/documentation/python)
